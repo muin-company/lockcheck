@@ -1,0 +1,15 @@
+{
+  "name": "test-project",
+  "version": "1.0.0",
+  "lockfileVersion": 3,
+  "packages": {
+    "": {
+      "name": "test-project",
+      "version": "1.0.0"
+    },
+    "node_modules/no-integrity": {
+      "version": "1.0.0",
+      "resolved": "https://registry.npmjs.org/no-integrity/-/no-integrity-1.0.0.tgz"
+    }
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "name": "lockcheck",
+  "version": "1.0.0",
+  "description": "Verify lockfile integrity. Detect suspicious registries, duplicate versions, missing hashes.",
+  "main": "dist/index.js",
+  "bin": {
+    "lockcheck": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc && cp -r src/test/fixtures dist/test/",
+    "test": "node --test dist/test/*.test.js",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "lockfile",
+    "security",
+    "npm",
+    "package-lock",
+    "integrity"
+  ],
+  "author": "muin-company",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
