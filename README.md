@@ -573,6 +573,805 @@ for repo in ~/projects/*/; do
 done
 ```
 
+## Integration Guides
+
+### GitHub Actions (Detailed)
+
+```yaml
+# .github/workflows/lockfile-security.yml
+name: Lockfile Security Check
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    paths:
+      - 'package-lock.json'
+      - 'yarn.lock'
+      - 'pnpm-lock.yaml'
+
+jobs:
+  lockcheck:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+      
+      - name: Run lockcheck (standard)
+        run: npx lockcheck
+        continue-on-error: true
+        id: lockcheck-standard
+      
+      - name: Run lockcheck (strict mode)
+        run: npx lockcheck --strict
+        id: lockcheck-strict
+      
+      - name: Check for version drift
+        run: npx lockcheck --drift
+        id: lockcheck-drift
+      
+      - name: Generate JSON report
+        if: always()
+        run: npx lockcheck --json > lockcheck-report.json
+      
+      - name: Upload report artifact
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: lockcheck-report
+          path: lockcheck-report.json
+      
+      - name: Comment on PR with results
+        if: github.event_name == 'pull_request' && failure()
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const report = JSON.parse(fs.readFileSync('lockcheck-report.json', 'utf8'));
+            
+            let comment = '## 🔒 Lockfile Security Report\n\n';
+            
+            if (report.errors.length > 0) {
+              comment += '### ❌ Errors Found\n\n';
+              report.errors.forEach(err => {
+                comment += `- **${err.type}**: ${err.package}@${err.version}\n`;
+                if (err.registry) comment += `  - Registry: \`${err.registry}\`\n`;
+              });
+            }
+            
+            if (report.warnings.length > 0) {
+              comment += '\n### ⚠️  Warnings\n\n';
+              report.warnings.forEach(warn => {
+                comment += `- ${warn.type}: ${warn.package}\n`;
+              });
+            }
+            
+            comment += `\n### 📊 Summary\n`;
+            comment += `- Total packages: ${report.summary.totalPackages}\n`;
+            comment += `- Registries: ${report.summary.registries.length}\n`;
+            comment += `- Missing integrity: ${report.summary.missingIntegrity}\n`;
+            comment += `- Duplicates: ${report.summary.duplicates}\n`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+```
+
+### GitLab CI (Advanced)
+
+```yaml
+# .gitlab-ci.yml
+stages:
+  - security
+  - report
+
+lockfile-security:
+  stage: security
+  image: node:18-alpine
+  script:
+    - npm install -g lockcheck
+    - lockcheck --json > lockcheck-report.json
+    - |
+      if ! lockcheck --strict; then
+        echo "❌ Lockfile security check failed"
+        exit 1
+      fi
+  artifacts:
+    reports:
+      junit: lockcheck-report.json
+    when: always
+    expire_in: 30 days
+  only:
+    changes:
+      - package-lock.json
+      - yarn.lock
+  allow_failure: false
+
+security-report:
+  stage: report
+  script:
+    - |
+      cat lockcheck-report.json | \
+      jq -r '"Security issues: \(.errors | length)"'
+  dependencies:
+    - lockfile-security
+```
+
+### Pre-commit Hook with Husky
+
+```bash
+# Install husky
+npm install --save-dev husky
+
+# Initialize husky
+npx husky install
+
+# Add pre-commit hook
+npx husky add .husky/pre-commit "npm run lockcheck"
+```
+
+**package.json:**
+
+```json
+{
+  "scripts": {
+    "lockcheck": "lockcheck --strict --drift",
+    "prepare": "husky install"
+  },
+  "devDependencies": {
+    "husky": "^8.0.0",
+    "lockcheck": "^1.0.0"
+  }
+}
+```
+
+**Advanced pre-commit with selective checking:**
+
+```bash
+#!/bin/sh
+# .husky/pre-commit
+
+# Only check if package-lock.json is staged
+if git diff --cached --name-only | grep -q "package-lock.json"; then
+  echo "🔍 Lockfile changed, running security check..."
+  
+  # Run standard check
+  npx lockcheck || {
+    echo "❌ Lockfile check failed"
+    exit 1
+  }
+  
+  # Check for drift
+  npx lockcheck --drift || {
+    echo "⚠️  Version drift detected"
+    read -p "Continue anyway? (y/N): " response
+    if [ "$response" != "y" ]; then
+      exit 1
+    fi
+  }
+  
+  echo "✅ Lockfile is secure"
+fi
+```
+
+### package.json Scripts
+
+```json
+{
+  "scripts": {
+    "check": "npm run check:lockfile",
+    "check:lockfile": "lockcheck",
+    "check:lockfile:strict": "lockcheck --strict",
+    "check:lockfile:drift": "lockcheck --drift",
+    "check:lockfile:all": "lockcheck --strict --drift",
+    "preinstall": "lockcheck --drift || echo '⚠️  Lockfile drift detected'",
+    "postinstall": "lockcheck",
+    "precommit": "lockcheck --strict",
+    "ci:security": "lockcheck --strict --json > reports/lockcheck.json"
+  }
+}
+```
+
+### Monorepo Setup (Lerna/Nx/Turborepo)
+
+```bash
+# Check all packages
+for pkg in packages/*; do
+  if [ -f "$pkg/package-lock.json" ]; then
+    echo "Checking $pkg"
+    lockcheck "$pkg/package-lock.json" --strict || exit 1
+  fi
+done
+```
+
+**With Turborepo:**
+
+```json
+// turbo.json
+{
+  "pipeline": {
+    "check:lockfile": {
+      "cache": false,
+      "dependsOn": []
+    }
+  }
+}
+```
+
+```json
+// package.json (root)
+{
+  "scripts": {
+    "check:lockfile": "turbo run check:lockfile"
+  }
+}
+```
+
+```json
+// packages/app-a/package.json
+{
+  "scripts": {
+    "check:lockfile": "lockcheck"
+  }
+}
+```
+
+### Docker Integration
+
+```dockerfile
+# Dockerfile
+FROM node:18-alpine
+
+WORKDIR /app
+
+# Copy lockfile first
+COPY package-lock.json .
+
+# Verify lockfile before installing
+RUN npm install -g lockcheck && \
+    lockcheck package-lock.json --strict && \
+    echo "✅ Lockfile verified"
+
+# Now safe to install dependencies
+COPY package.json .
+RUN npm ci
+
+COPY . .
+RUN npm run build
+
+CMD ["npm", "start"]
+```
+
+### Jenkins Pipeline
+
+```groovy
+// Jenkinsfile
+pipeline {
+  agent any
+  
+  stages {
+    stage('Security: Lockfile Check') {
+      steps {
+        script {
+          def lockcheckResult = sh(
+            script: 'npx lockcheck --json',
+            returnStdout: true
+          )
+          
+          def report = readJSON text: lockcheckResult
+          
+          if (!report.passed) {
+            error("Lockfile security check failed: ${report.errors.size()} errors")
+          }
+          
+          // Archive report
+          writeFile file: 'lockcheck-report.json', text: lockcheckResult
+          archiveArtifacts artifacts: 'lockcheck-report.json'
+        }
+      }
+    }
+  }
+  
+  post {
+    failure {
+      emailext(
+        subject: "Lockfile Security Alert: ${env.JOB_NAME}",
+        body: "Lockfile check failed. See attached report.",
+        attachmentsPattern: 'lockcheck-report.json',
+        to: 'security-team@company.com'
+      )
+    }
+  }
+}
+```
+
+## Troubleshooting
+
+### Problem: False Positive on Private Registry
+
+**Symptom:**
+```bash
+⚠️  Suspicious Registry:
+  - @mycompany/private-pkg@1.0.0
+    Found: https://npm.internal.company.com
+```
+
+**Solution:**
+Private/corporate registries are expected. Currently, lockcheck flags all non-npmjs.org registries. You can:
+
+1. **Review manually** - Verify the registry is your company's
+2. **Suppress in CI** - Use `|| true` for private packages:
+   ```bash
+   lockcheck || [ $? -eq 1 ] && echo "Private registry detected, OK"
+   ```
+3. **Feature request** - Configuration file support coming soon:
+   ```json
+   {
+     "allowedRegistries": [
+       "https://registry.npmjs.org",
+       "https://npm.internal.company.com"
+     ]
+   }
+   ```
+
+### Problem: Missing Integrity Hashes After Manual Edit
+
+**Symptom:**
+```bash
+❌ lodash@4.17.21 - No integrity hash found
+```
+
+**Cause:** Manually editing `package-lock.json` removes integrity hashes.
+
+**Solution:**
+```bash
+# Delete and regenerate lockfile
+rm -rf node_modules package-lock.json
+npm install
+
+# Verify integrity restored
+lockcheck
+```
+
+**Prevention:** Never manually edit lockfiles. Use `npm install <package>` instead.
+
+### Problem: Drift Detection Shows False Positives
+
+**Symptom:**
+```bash
+📦 react: 
+   package.json: ^18.2.0
+   lockfile:     18.2.5
+   ❌ Lockfile version doesn't satisfy package.json range!
+```
+
+**Cause:** This is actually correct! `18.2.5` satisfies `^18.2.0`, but the message is confusing.
+
+**Workaround:** Check semver ranges manually:
+```bash
+npm semver 18.2.5 --range "^18.2.0"  # Returns 18.2.5 if matches
+```
+
+**Fix coming:** Improve drift detection to respect semver ranges.
+
+### Problem: Too Many Duplicate Version Warnings
+
+**Symptom:**
+```bash
+⚠️  DUPLICATE VERSIONS:
+📦 lodash found in 47 different versions
+```
+
+**Solution:**
+```bash
+# Deduplicate dependencies
+npm dedupe
+
+# Or update to latest compatible versions
+npm update
+
+# Force specific version (caution!)
+npm install lodash@latest --save
+
+# In package.json, use exact versions
+{
+  "dependencies": {
+    "lodash": "4.17.21"  // No ^ or ~
+  },
+  "resolutions": {       // For Yarn
+    "lodash": "4.17.21"
+  },
+  "overrides": {         // For npm 8.3+
+    "lodash": "4.17.21"
+  }
+}
+```
+
+### Problem: lockcheck Hangs on Large Monorepo
+
+**Symptom:** `lockcheck` runs for minutes without output.
+
+**Cause:** Large lockfiles (100K+ packages) take time to parse.
+
+**Solution:**
+```bash
+# Run with timeout
+timeout 60s lockcheck || echo "Timeout, skipping"
+
+# Or check only changed packages (CI)
+git diff --name-only origin/main | grep "package-lock.json" | \
+  xargs -I {} lockcheck {}
+```
+
+### Problem: Exit Code 0 Despite Warnings
+
+**Symptom:** CI passes even though lockcheck shows warnings.
+
+**Cause:** Warnings don't fail by default (only errors do).
+
+**Solution:** Use `--strict` mode:
+```bash
+lockcheck --strict  # Treats warnings as errors
+```
+
+### Problem: "ENOENT: no such file" Error
+
+**Symptom:**
+```bash
+Error: ENOENT: no such file or directory, open 'package-lock.json'
+```
+
+**Cause:** Lockfile doesn't exist or wrong path.
+
+**Solution:**
+```bash
+# Check if lockfile exists
+ls -la package-lock.json
+
+# Specify path explicitly
+lockcheck ./path/to/package-lock.json
+
+# Generate lockfile if missing
+npm install
+```
+
+### Problem: JSON Output is Malformed
+
+**Symptom:** `lockcheck --json` returns partial JSON or crashes.
+
+**Cause:** Bug in JSON serialization or corrupted lockfile.
+
+**Solution:**
+```bash
+# Validate lockfile first
+npm install --package-lock-only
+
+# Try again
+lockcheck --json | jq .  # jq will show JSON errors
+```
+
+### Problem: Drift Check Fails After Fresh Install
+
+**Symptom:**
+```bash
+$ rm -rf node_modules package-lock.json
+$ npm install
+$ lockcheck --drift
+❌ Version drift detected
+```
+
+**Cause:** `package.json` has outdated ranges that npm resolved differently.
+
+**Solution:**
+```bash
+# Update package.json to match lockfile
+npm install --save <package>@<locked-version>
+
+# Or update lockfile to latest
+rm package-lock.json
+npm install
+```
+
+## Best Practices
+
+### 1. Run lockcheck in Multiple Stages
+
+```yaml
+# Don't just check once - layer your security
+stages:
+  - pre-commit: Basic check (fast feedback)
+  - PR: Strict check (block merge)
+  - nightly: Full audit (catch issues over time)
+```
+
+```json
+{
+  "scripts": {
+    "precommit": "lockcheck",
+    "ci:pr": "lockcheck --strict --drift",
+    "ci:nightly": "lockcheck --strict --json > nightly-report.json"
+  }
+}
+```
+
+### 2. Combine with Other Security Tools
+
+```bash
+# Layered security approach
+npm audit                      # Check for known vulnerabilities
+lockcheck --strict             # Verify lockfile integrity
+npx license-checker --summary  # Check licenses
+```
+
+**Full security pipeline:**
+
+```yaml
+security-pipeline:
+  - npm audit --audit-level=high
+  - lockcheck --strict
+  - npx snyk test               # Snyk vulnerability scanning
+  - npx license-checker --onlyAllow 'MIT;Apache-2.0;BSD-3-Clause'
+```
+
+### 3. Version Pin Critical Dependencies
+
+```json
+{
+  "dependencies": {
+    "express": "4.18.2",      // No ^ or ~ for critical deps
+    "jsonwebtoken": "9.0.0"   // Exact versions prevent drift
+  },
+  "devDependencies": {
+    "eslint": "^8.0.0"        // Dev tools can be flexible
+  }
+}
+```
+
+### 4. Automate Lockfile Updates
+
+```yaml
+# Renovate config (.github/renovate.json)
+{
+  "extends": ["config:base"],
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 5am on monday"]
+  },
+  "postUpgradeTasks": {
+    "commands": [
+      "npm run lockcheck"
+    ]
+  }
+}
+```
+
+### 5. Document Exceptions
+
+```bash
+# If you must use a non-standard registry, document it
+# .lockcheck-exceptions
+# This file explains why certain registries are allowed:
+# 
+# - https://npm.internal.company.com
+#   Our private npm registry for @mycompany/* packages
+#
+# - https://artifacts.company.io
+#   Legacy artifacts server (migrating to npm.internal.company.com)
+```
+
+### 6. Monitor Drift Over Time
+
+```bash
+# Track drift trends
+echo "$(date),$(lockcheck --drift --json | jq '.driftCount')" >> drift-log.csv
+
+# Alert if drift increases
+current_drift=$(lockcheck --drift --json | jq '.driftCount')
+if [ "$current_drift" -gt 10 ]; then
+  echo "⚠️  High drift: $current_drift mismatches"
+  # Send alert
+fi
+```
+
+### 7. Use Lock Files Everywhere
+
+```bash
+# Even for simple scripts
+{
+  "name": "simple-script",
+  "version": "1.0.0",
+  "lockfileVersion": 2,
+  "dependencies": {
+    "axios": "^1.4.0"
+  }
+}
+```
+
+**Why?** Ensures reproducible builds even for one-off scripts.
+
+### 8. Test Lockfile Changes in Isolation
+
+```bash
+# Before merging a PR with lockfile changes:
+
+# 1. Check out the PR branch
+git checkout feature/update-deps
+
+# 2. Fresh install
+rm -rf node_modules
+npm ci
+
+# 3. Run security checks
+npm audit
+lockcheck --strict --drift
+
+# 4. Run tests
+npm test
+
+# 5. Build and verify
+npm run build
+npm run start
+```
+
+### 9. Keep Lock Files in Version Control
+
+```bash
+# ✅ DO commit lockfiles
+git add package-lock.json
+git commit -m "chore: update dependencies"
+
+# ❌ DON'T ignore lockfiles
+# .gitignore should NOT contain:
+# package-lock.json  # BAD!
+```
+
+**Exception:** Only ignore lockfiles for libraries (not applications).
+
+### 10. Educate Your Team
+
+```markdown
+# Team Guidelines: Lockfile Hygiene
+
+## Do's ✅
+- Always commit `package-lock.json` changes
+- Run `npm ci` in CI (not `npm install`)
+- Use `npm update` to update deps (not manual edits)
+- Run `lockcheck` before pushing
+
+## Don'ts ❌
+- Never manually edit lockfiles
+- Don't delete lockfile without regenerating
+- Don't ignore lockcheck warnings
+- Don't use `npm install` in CI
+
+## When lockcheck fails:
+1. Review the error/warning
+2. If suspicious registry → investigate
+3. If missing integrity → regenerate lockfile
+4. If duplicates → run `npm dedupe`
+5. Ask #security-team if unsure
+```
+
+## Framework-Specific Examples
+
+### React / Create React App
+
+```bash
+# CRA projects
+cd my-react-app
+lockcheck
+
+# Common issues in CRA:
+# - react-scripts pulls many deps → duplicates common
+# - Solution: Use npm dedupe or upgrade react-scripts
+```
+
+**package.json:**
+
+```json
+{
+  "scripts": {
+    "start": "lockcheck && react-scripts start",
+    "build": "lockcheck --strict && react-scripts build",
+    "eject": "lockcheck && react-scripts eject"
+  }
+}
+```
+
+### Next.js
+
+```bash
+# Next.js with custom server
+lockcheck
+
+# Check for Next.js-specific drift
+lockcheck --drift | grep "next"
+```
+
+**next.config.js:**
+
+```javascript
+module.exports = {
+  webpack: (config, { isServer }) => {
+    if (isServer) {
+      // Run lockcheck during server builds
+      require('child_process').execSync('lockcheck --strict');
+    }
+    return config;
+  }
+};
+```
+
+### Vue / Vite
+
+```bash
+# Vite projects often use pnpm
+# lockcheck works with package-lock.json only (npm)
+
+# If using pnpm, convert to npm first
+pnpm import  # Generates package-lock.json
+lockcheck
+```
+
+### Express / Node.js Backend
+
+```bash
+# Backend projects: strict mode essential
+lockcheck --strict --drift
+
+# Add to Docker healthcheck
+HEALTHCHECK --interval=30s CMD lockcheck || exit 1
+```
+
+**server.js:**
+
+```javascript
+// Check lockfile at startup
+const { execSync } = require('child_process');
+
+try {
+  execSync('lockcheck --strict', { stdio: 'inherit' });
+  console.log('✅ Lockfile verified');
+} catch (err) {
+  console.error('❌ Lockfile check failed');
+  process.exit(1);
+}
+
+// Start server
+app.listen(3000);
+```
+
+### Electron Apps
+
+```bash
+# Electron has complex dependency trees
+lockcheck
+
+# Check both main and renderer lockfiles
+lockcheck src/main/package-lock.json
+lockcheck src/renderer/package-lock.json
+```
+
+### React Native
+
+```bash
+# RN projects often have many duplicates
+lockcheck | tee lockcheck-report.txt
+
+# Common issue: metro-related duplicates
+npm dedupe
+lockcheck
+```
+
 ## Contributing
 
 PRs welcome. Keep it simple.
