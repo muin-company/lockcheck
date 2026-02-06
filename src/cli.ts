@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { resolve } from 'path';
+import { resolve, dirname, join } from 'path';
 import { existsSync } from 'fs';
 import { checkLockfileFromPath } from './index';
 
@@ -12,17 +12,20 @@ Usage:
   lockcheck [path]                    Check lockfile (default: ./package-lock.json)
   lockcheck --json [path]             Output as JSON
   lockcheck --strict [path]           Treat warnings as errors
+  lockcheck --drift [path]            Check for drift with package.json
   lockcheck --help                    Show this help
 
 Options:
   --json      Output results as JSON
   --strict    Fail on warnings
+  --drift     Detect version mismatches between package.json and lockfile
   --help      Show help
 
 Examples:
   lockcheck
   lockcheck ./my-project/package-lock.json
   lockcheck --strict --json
+  lockcheck --drift                   # Check for package.json vs lockfile drift
 `);
 }
 
@@ -36,6 +39,7 @@ function main() {
 
   const jsonOutput = args.includes('--json');
   const strict = args.includes('--strict');
+  const driftCheck = args.includes('--drift');
   
   const pathArg = args.find(arg => !arg.startsWith('--'));
   const lockfilePath = resolve(pathArg || './package-lock.json');
@@ -45,7 +49,22 @@ function main() {
     process.exit(1);
   }
 
-  const result = checkLockfileFromPath(lockfilePath, { strict });
+  // Find package.json for drift check
+  let packageJsonPath: string | undefined;
+  if (driftCheck) {
+    const dir = dirname(lockfilePath);
+    packageJsonPath = join(dir, 'package.json');
+    if (!existsSync(packageJsonPath)) {
+      console.error(`Error: package.json not found at ${packageJsonPath} (required for --drift)`);
+      process.exit(1);
+    }
+  }
+
+  const result = checkLockfileFromPath(lockfilePath, { 
+    strict,
+    driftCheck,
+    packageJsonPath 
+  });
 
   if (jsonOutput) {
     console.log(JSON.stringify(result, null, 2));

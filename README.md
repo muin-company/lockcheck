@@ -37,6 +37,9 @@ lockcheck --json
 
 # Treat warnings as errors (for CI)
 lockcheck --strict
+
+# Check for drift (package.json vs lockfile mismatch) - NEW!
+lockcheck --drift
 ```
 
 ## What it checks
@@ -44,6 +47,7 @@ lockcheck --strict
 - **Suspicious registries** - Packages not from registry.npmjs.org or registry.yarnpkg.com
 - **Missing integrity hashes** - Packages without SHA verification
 - **Duplicate versions** - Same package with multiple versions (bloats node_modules)
+- **Version drift** (NEW with `--drift`) - Mismatches between package.json and lockfile versions
 
 ## Examples
 
@@ -168,7 +172,60 @@ Exit code: 0 (warning only)
 
 ---
 
-### Example 5: CI Enforcement with --strict Mode
+### Example 5: Version Drift Detection (NEW!)
+
+**Scenario:** Detect when package.json and lockfile versions don't match.
+
+```bash
+$ lockcheck --drift
+
+🔍 Scanning package-lock.json...
+🔍 Comparing with package.json...
+
+⚠️  VERSION DRIFT DETECTED:
+
+📦 react: 
+   package.json: ^18.2.0
+   lockfile:     17.0.2
+   ❌ Lockfile version doesn't satisfy package.json range!
+
+📦 axios:
+   package.json: ^1.4.0
+   lockfile:     1.3.0
+   ❌ Lockfile version is outdated!
+
+📦 typescript:
+   ❌ Listed in package.json but missing from lockfile!
+
+📊 Drift Summary:
+  - Version mismatches: 2
+  - Missing in lockfile: 1
+  - Total drift issues: 3
+
+💡 Recommended Fix:
+  rm -rf node_modules package-lock.json
+  npm install
+
+This ensures your lockfile is regenerated from package.json.
+
+Exit code: 1 (warnings found)
+```
+
+**Why drift happens:**
+- Manual edits to package.json without running `npm install`
+- Switching branches without updating dependencies
+- Corrupted or stale lockfile
+- Dependencies added/removed but not committed
+
+**When to use --drift:**
+- Before deploying to catch stale lockfiles
+- In CI to enforce consistency
+- After merging branches with dependency changes
+- When debugging "works on my machine" issues
+
+---
+
+### Example 6: CI Enforcement with --strict Mode
 
 **Scenario:** Block any lockfile issues in your CI pipeline.
 

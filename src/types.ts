@@ -16,7 +16,10 @@ export type IssueType =
   | 'suspicious-registry'
   | 'duplicate-version'
   | 'missing-integrity'
-  | 'invalid-format';
+  | 'invalid-format'
+  | 'version-mismatch'
+  | 'missing-in-lockfile'
+  | 'extra-in-lockfile';
 
 export interface PackageEntry {
   name: string;
@@ -28,4 +31,6 @@ export interface PackageEntry {
 export interface CheckOptions {
   strict?: boolean;
   allowedRegistries?: string[];
+  driftCheck?: boolean;
+  packageJsonPath?: string;
 }

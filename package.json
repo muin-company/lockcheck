@@ -1,5 +1,5 @@
 {
-  "name": "lockcheck",
+  "name": "lockcheck-muin",
   "version": "1.0.0",
   "description": "Verify lockfile integrity. Detect suspicious registries, duplicate versions, missing hashes.",
   "main": "dist/index.js",
