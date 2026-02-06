@@ -47,23 +47,199 @@ lockcheck --strict
 
 ## Examples
 
-### Before
+### Example 1: Clean Project - All Good ✅
+
+**Scenario:** Well-maintained project with standard dependencies.
 
 ```bash
+$ cd my-clean-project
 $ lockcheck
-⚠️  Warnings:
 
-  - Package evil-package@1.0.0 uses non-standard registry
-    URL: https://malicious-registry.com/evil-package/-/evil-package-1.0.0.tgz
-  - Package lodash has 2 different versions: 4.17.20, 4.17.21
-```
+🔍 Scanning package-lock.json...
 
-### After (fixing the issues)
-
-```bash
-$ lockcheck
 ✅ Lockfile looks good!
+
+📊 Summary:
+  - Total packages: 342
+  - Registries: 1 (registry.npmjs.org)
+  - All integrity hashes present: ✓
+  - No duplicate versions found: ✓
+
+Exit code: 0
 ```
+
+**Result:** Safe to deploy!
+
+---
+
+### Example 2: Suspicious Registry Detected 🚨
+
+**Scenario:** A compromised dependency or typosquatting attempt.
+
+```bash
+$ lockcheck
+
+🔍 Scanning package-lock.json...
+
+⚠️  SECURITY WARNINGS:
+
+🚨 Suspicious Registry:
+  - evil-package@1.0.0
+    Expected: https://registry.npmjs.org
+    Found:    https://malicious-registry.com/evil-package/-/evil-package-1.0.0.tgz
+
+    ⚠️  This package is NOT from the official npm registry!
+    Risk: Supply chain attack, malware injection
+
+🔍 Recommended Action:
+  1. Check if this is a private/corporate registry (expected behavior)
+  2. If not, REMOVE this package immediately
+  3. Run `npm audit` and scan for malware
+  4. Notify your security team
+
+Exit code: 1
+```
+
+**Action:** Investigate and remove the suspicious package.
+
+---
+
+### Example 3: Missing Integrity Hashes
+
+**Scenario:** Old lockfile or manually edited file missing SHA checksums.
+
+```bash
+$ lockcheck
+
+🔍 Scanning package-lock.json...
+
+⚠️  MISSING INTEGRITY HASHES:
+
+❌ lodash@4.17.21 - No integrity hash found
+❌ express@4.18.0 - No integrity hash found
+❌ axios@1.3.0 - No integrity hash found
+
+📊 Summary:
+  - Total packages: 89
+  - Missing integrity: 3
+
+⚠️  Without integrity hashes, npm cannot verify package contents!
+    This allows for man-in-the-middle attacks or corrupted packages.
+
+🔧 Fix:
+  rm -rf node_modules package-lock.json
+  npm install
+
+Exit code: 1
+```
+
+---
+
+### Example 4: Duplicate Versions Bloating node_modules
+
+**Scenario:** Different versions of the same package installed, wasting space.
+
+```bash
+$ lockcheck
+
+🔍 Scanning package-lock.json...
+
+⚠️  DUPLICATE VERSIONS:
+
+📦 lodash found in 3 different versions:
+  - 4.17.20 (used by: webpack, babel-core)
+  - 4.17.21 (used by: express, mocha)
+  - 3.10.1 (used by: legacy-lib)
+
+📦 moment found in 2 different versions:
+  - 2.29.1 (used by: react-datepicker)
+  - 2.30.0 (used by: chart.js)
+
+📊 Impact:
+  - Extra disk space: ~450 KB
+  - Potential bugs from version mismatch
+
+💡 Fix:
+  npm dedupe  # Attempts to flatten dependency tree
+  # Or update dependencies to use consistent versions
+
+Exit code: 0 (warning only)
+```
+
+---
+
+### Example 5: CI Enforcement with --strict Mode
+
+**Scenario:** Block any lockfile issues in your CI pipeline.
+
+```bash
+$ lockcheck --strict
+
+🔍 Scanning package-lock.json...
+
+⚠️  Warnings found (treated as errors in --strict mode):
+
+  - Package lodash has 2 different versions: 4.17.20, 4.17.21
+  - Package moment has 2 different versions: 2.29.1, 2.30.0
+
+❌ FAILED: 2 warnings in --strict mode
+
+Exit code: 1  ← Build fails
+```
+
+**GitHub Actions Example:**
+
+```yaml
+- name: Check lockfile
+  run: npx lockcheck --strict
+```
+
+**Result:** PR is blocked until duplicates are resolved.
+
+---
+
+### Example 6: JSON Output for Automation
+
+**Scenario:** Integrate lockcheck results into your security dashboard.
+
+```bash
+$ lockcheck --json > lockfile-report.json
+```
+
+**Output (`lockfile-report.json`):**
+
+```json
+{
+  "passed": false,
+  "errors": [
+    {
+      "type": "suspicious_registry",
+      "package": "evil-package",
+      "version": "1.0.0",
+      "registry": "https://malicious-registry.com",
+      "expected": "https://registry.npmjs.org"
+    }
+  ],
+  "warnings": [
+    {
+      "type": "duplicate_version",
+      "package": "lodash",
+      "versions": ["4.17.20", "4.17.21"]
+    }
+  ],
+  "summary": {
+    "totalPackages": 342,
+    "registries": [
+      "https://registry.npmjs.org",
+      "https://malicious-registry.com"
+    ],
+    "missingIntegrity": 0,
+    "duplicates": 1
+  }
+}
+```
+
+**Use case:** Parse JSON, send alerts to Slack/PagerDuty if `passed: false`.
 
 ## CI Integration
 
